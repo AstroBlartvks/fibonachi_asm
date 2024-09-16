@@ -8,6 +8,7 @@ section .data
     output db 256 dup("?")                      ; вывод результата
 
     step_10 dq 0
+
     digit dq 0
     counter dq 0
 
@@ -16,15 +17,20 @@ section .data
     
     prompt db "Enter your fib-number: ", 0      ; строка для ввода текста
     prompt_size equ $-prompt                    ; размер строки
+    prompt_3 db "Enter your 10-number: ", 0     ; строка для ввода текста
+    prompt_3_size equ $-prompt_3                  ; размер строки
     prompt_2 db "Your result is: ", 0           ; строка для ввода текста
     prompt_2_size equ $-prompt_2                ; размер строки
     error_string db "Your number is not valid! "; строка в случае ошибки
     error_string_size equ $-error_string        ; длина строки
     nline db 0ah, 0                             ; перевод строки
     nline_size equ $-nline                      ; размер строки
+    quest db "What the type of the operation?", 0ah, "(1/2) - (10->fib / fib->10): "
+    quest_size equ $-quest
 
-    input_buf2 db 64 dup("?")                     
+    input_buf2 db 64 dup("?")                  
     input_size2 dq 0
+    str_to_int_res dq 0
 
 
 section .text
@@ -100,6 +106,11 @@ _fib_range:
     mov eax, 1        ; аналогично с (1)
     mov [var_b], eax  ; var_b = eax = 1 | b = 1
 
+    cmp rcx, 0        ; if n != 0
+    jne _loop_fib     ;     goto _loop_fib
+    mov [var_c], rcx  ; else
+    retn              ;     return var_c = 0
+
     _loop_fib:
     ;   c = a + b        ; 32bit регистры, аналогично с (1)
         mov ebx, 0       ; ebx = 0           | c = 0
@@ -146,17 +157,7 @@ _print:
     syscall
     retn
 
-
-_start:
-
-    ;push x             ; Передаём номер числа фибоначи - x
-    ;call _fib_range    ; Вызываем функцию с аргументом - результат в переменной var_c
-
-    ; print(prompt)
-    push prompt
-    push prompt_size
-    call _print
-
+_input:
     mov eax, 3		        ; sys_read системный вызов для чтения
     mov ebx, 0		        ; используем stdin
     mov ecx, input_buf2  	; сохранить в ecx адрес буфера
@@ -164,6 +165,10 @@ _start:
     int 80h               ; системный вызов | вызов к ядру call kernel
 
     mov [input_size2], eax
+    retn
+
+;функция перевода из Цекендорфа в СС-19
+_fib_to_10:
 
     mov rcx, [input_size2]      ; счётчик
     dec rcx                     ; избавляемся от последнего символа конца строки
@@ -241,24 +246,148 @@ _start:
     
 
     ; print(prompt)
-    push prompt_2
+    push prompt_2               ; вывод Your result is:
     push prompt_2_size
     call _print
 
-    mov rax, 1
-    mov rdi, 1
-    mov rsi, output
-    mov rdx, [output_size]
-    syscall
+    retn
+
+_string_to_int:
+    mov rcx, [input_size2]
+    _convert_char_to_int_loop:
+        mov rax, [input_size2]
+        sub rax, rcx
+        push rcx
+        push rax
+        call _pow_10
+        pop rcx
+        mov rax, rcx
+        sub rax, 2
+        movzx rax, byte[input_buf2 + rax]
+        sub rax, 48
+        mov rbx, [step_10]
+        imul rax, rbx
+        mov rbx, [str_to_int_res]
+        add rbx, rax
+        mov [str_to_int_res], rbx
+        dec rcx
+        cmp rcx, 1
+        jne _convert_char_to_int_loop
+    retn
+
+_10_to_fib:
+    call _string_to_int
+
+    mov rcx, 0
+    _10_to_fib_find_fib_bigger:
+        push rcx
+        push rcx
+        call _fib_range
+        mov rax, [var_c]
+        pop rcx
+        mov rbx, [str_to_int_res]
+        cmp rax, rbx
+        ja _10_to_fib_found_bigger
+        inc rcx
+        jmp _10_to_fib_find_fib_bigger
+        
+    _10_to_fib_found_bigger:
+    ; rcx - номер числа фибоначи, которое большое, чем число
+    mov rax, [str_to_int_res]
+    mov rbx, 0
+    _10_to_fib_find_anwser:
+        dec rcx
+
+        ; сохраним rcx, rbx, rax
+        push rcx
+        push rbx
+        push rax
+
+        ; n - rcx, результат - rdx
+        push rcx
+        call _fib_range
+        mov rdx, [var_c]
+
+        ; вытаскиваем rax, rbx, rcx
+        pop rax ; число, которое кодируем
+        pop rbx ; индекс 
+        pop rcx ; обратный отсчёт
+
+        cmp rax, rdx                      ; число > фибоначи(n)
+        jae _is_is_1
+
+        _is_is_0:
+        mov byte[output + rbx], 48        ; output[i] = '0'
+        jmp _10_to_fib_find_anwser_check
+
+        _is_is_1:
+        sub rax, rdx
+        mov byte[output + rbx], 49         ; output[i] = '1'
+        jmp _10_to_fib_find_anwser_check
+        
+        _10_to_fib_find_anwser_check:
+        inc rcx
+        inc rbx
+        dec rcx
+        cmp rcx, 0
+        jne _10_to_fib_find_anwser
+
+    dec rbx
+    mov [output_size], rbx
+    retn
+
+_start:
+    push quest
+    push quest_size
+    call _print
+
+    call _input
+    xor rax, rax
+    mov ah, [input_buf2]
+
+    cmp ah, 0x31
+    je _operation_10_to_fib
+
+    cmp ah, 0x32
+    je _operation_fib_to_10
+
+    jmp _error_stop
+
+    _operation_fib_to_10:
+        push prompt
+        push prompt_size
+        call _print
+
+        call _input
+        call _fib_to_10
+        jmp _anwser_user
+    
+    _operation_10_to_fib:
+        push prompt_3
+        push prompt_3_size
+        call _print
+
+        call _input
+        call _10_to_fib
+        jmp _anwser_user
+
+    
+    _anwser_user:
+        push output
+        mov rax, [output_size]
+        push rax
+        call _print
 
     ; \n - переход на новую строку
     call _new_line
 
     ;return 0 - вызод из программы
-    mov eax, 60        
-    mov rdi, 0
-    syscall
+    _exit:
+        mov eax, 60        
+        mov rdi, 0
+        syscall
 
+    ;return 1 - выход из программы с ошибкой
     _error_stop:
         push error_string
         push error_string_size
